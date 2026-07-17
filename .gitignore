@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+
+# Environments
+.env
+.venv
+venv/
+conda-meta/
+
+# MRI/image data
+*.nii
+*.nii.gz
+*.mgz
+*.mgh
+*.nrrd
+*.mha
+*.mhd
+
+# Model checkpoints and containers
+*.pt
+*.pth
+*.ckpt
+*.sif
+*.img
+*.tar.gz
+*.zip
+
+# Outputs and logs
+slurm-*.out
+*.log
+*.summary.json
+*_predictions*.csv
+ignore-*.csv
+test*.csv
+container_epoch*.csv
+raw_to_qc_test_*.csv
+
+# Large project folders
+Boxed-Input-Good-276/
+Boxed-Input-bad-276/
+Boxed-Test-good-276/
+Boxed-Test-bad-276/
+Boxed-Good-276-Artifacts-strongMOD/
+Artifact-Bad-Only-276/
+no-annotation-random-test-boxed/
+To-Test-good/
+To-Test-bad/
+To-Train-good/
+To-Train-bad/
+raw_to_qc_test_boxed-*/
+gradcam_*/
+train_boxed276_*/
+previousidea_runs/
+resnet_artifact_qc_runs/
+container_build/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/

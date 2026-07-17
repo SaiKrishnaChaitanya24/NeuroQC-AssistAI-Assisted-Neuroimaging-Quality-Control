@@ -1,0 +1,528 @@
+Bootstrap: docker
+From: ubuntu:24.04
+
+%labels
+    Author Sai Krishna Chaitanya Annavazala
+    Tool T-Net T1 MRI QC
+    Version v3_epoch021_PASS0p458_FAIL0p558_with_FSL_6.0.7.18
+    Description T-Net T1 MRI QC container using epoch021 best_model_fixed0p5 weights and PASS0p458 REVIEW0p458to0p558 FAIL0p558 triage
+%files
+    tenet_env.tar.gz /opt/tenet_env.tar.gz
+    app/train_t1qc_boxed276_artifact_detector.py /opt/t1qc/app/train_t1qc_boxed276_artifact_detector.py
+    app/predict_boxed276_folder.py /opt/t1qc/app/predict_boxed276_folder.py
+    app/box_t1.py /opt/t1qc/app/box_t1.py
+    app/t1qc_raw_to_qc.sh /opt/t1qc/app/t1qc_raw_to_qc.sh
+    models/t1qc_best_epoch021.pt /opt/t1qc/models/t1qc_best_epoch021.pt
+    templates /opt/t1qc/templates
+    fsl_opt.tar.gz /opt/fsl_opt.tar.gz
+    ants_opt.tar.gz /opt/ants_opt.tar.gz
+%post
+    set -e
+    echo "========== Minimal system setup =========="
+    # Some Apptainer fakeroot builds can have a broken/missing /dev/null.
+    # Fix it before any package/config script tries to write to /dev/null.
+    mkdir -p /dev || true
+    if [ ! -e /dev/null ]; then
+        mknod -m 666 /dev/null c 1 3 || touch /dev/null || true
+    fi
+    chmod 666 /dev/null || true
+    # Do not install heavy Ubuntu packages here.
+    # The packed tenet conda environment provides Python/Torch/Nibabel/Pandas.
+    # FSL is copied from fsl_opt.tar.gz below.
+    echo "Skipping apt-get install to avoid dpkg/fakeroot failures."
+    echo "========== Using copied FSL sandbox =========="
+    echo "FSL sandbox copied into /opt/fsl"
+    echo "Expected FSLDIR: /opt/fsl"
+    echo "========== Unpacking FSL archive =========="
+    mkdir -p /opt
+    tar -xzf /opt/fsl_opt.tar.gz -C /opt
+    rm -f /opt/fsl_opt.tar.gz
+    echo "FSL unpacked to /opt/fsl"
+    echo "========== Unpacking ANTs archive =========="
+    tar -xzf /opt/ants_opt.tar.gz -C /opt
+    rm -f /opt/ants_opt.tar.gz
+    echo "ANTs unpacked to /opt/ants"
+
+    echo "========== Configuring ANTs library path =========="
+    echo "/opt/ants/lib" > /etc/ld.so.conf.d/ants.conf
+    ldconfig || true
+
+    echo "========== Unpacking packed tenet environment =========="
+    rm -rf /opt/conda/envs/tenet
+    mkdir -p /opt/conda/envs/tenet
+    # Exclude bad python3.1 symlink/path that caused tar errors during build.
+    tar -xzf /opt/tenet_env.tar.gz -C /opt/conda/envs/tenet
+    rm -f /opt/tenet_env.tar.gz
+    echo "========== Fixing packed conda paths =========="
+    /opt/conda/envs/tenet/bin/conda-unpack || true
+    echo "========== Creating threshold config =========="
+    mkdir -p /opt/t1qc/config
+    cat > /opt/t1qc/config/thresholds_v3_epoch021.json <<'EOF'
+{
+  "model_name": "T-Net T1QC v3 epoch 21 best_model_fixed0p5",
+  "checkpoint": "/opt/t1qc/models/t1qc_best_epoch021.pt",
+  "checkpoint_epoch": 21,
+  "pass_threshold": 0.458,
+  "fail_threshold": 0.558,
+  "triage_rule": {
+    "PASS_likely_good": "prob_bad < 0.458",
+    "REVIEW_caution": "0.458 <= prob_bad < 0.558",
+    "FAIL_likely_bad": "prob_bad >= 0.558"
+  },
+  "known_labeled_metrics": {
+    "known_good_n": 38,
+    "known_bad_n": 45,
+    "good_counts": {
+      "PASS": 32,
+      "REVIEW": 3,
+      "FAIL": 3
+    },
+    "bad_counts": {
+      "PASS": 11,
+      "REVIEW": 12,
+      "FAIL": 22
+    "combined_counts": {
+      "PASS": 43,
+      "REVIEW": 15,
+      "FAIL": 25,
+      "total": 83
+    "manual_review_workload": 0.181,
+    "bad_flagged_review_or_fail": 0.756,
+    "good_clean_pass": 0.842,
+    "hard_false_fail_on_good": 0.079,
+    "bad_missed_as_pass": 0.244,
+    "fail_precision": 0.880,
+    "pass_reliability": 0.744,
+    "suspicious_flag_precision": 0.850
+  }
+}
+EOF
+    echo "========== Creating t1qc_predict_boxed command =========="
+    cat > /usr/local/bin/t1qc_predict_boxed <<'EOF'
+#!/bin/bash
+set -euo pipefail
+export PATH="/opt/conda/envs/tenet/bin:/opt/fsl/bin:/opt/ants/bin:$PATH"
+export PYTHONNOUSERSITE=1
+export FSLDIR="/opt/fsl"
+    export ANTSPATH="/opt/ants/bin/"
+    export LD_LIBRARY_PATH="/opt/ants/lib:${LD_LIBRARY_PATH:-}"
+    export ANTSPATH="/opt/ants/bin/"
+    export LD_LIBRARY_PATH="/opt/ants/lib:${LD_LIBRARY_PATH:-}"
+export FSLOUTPUTTYPE="NIFTI_GZ"
+export FSLMULTIFILEQUIT="TRUE"
+export FSLLOCKDIR=""
+export FSLMACHINELIST=""
+export FSLREMOTECALL=""
+python /opt/t1qc/app/predict_boxed276_folder.py \
+    --checkpoint /opt/t1qc/models/t1qc_best_epoch021.pt \
+    --threshold 0.558 \
+    --pass-threshold 0.458 \
+    --fail-threshold 0.558 \
+    "$@"
+    chmod +x /usr/local/bin/t1qc_predict_boxed
+    echo "========== Creating t1qc_apply_triage command =========="
+    cat > /usr/local/bin/t1qc_apply_triage <<'EOF'
+python - "$@" <<'PY'
+import sys
+from pathlib import Path
+import pandas as pd
+if len(sys.argv) < 2:
+    raise SystemExit(
+        "Usage:\n"
+        "  t1qc_apply_triage predictions.csv [output.csv]\n\n"
+        "The input CSV must contain a prob_bad column."
+    )
+inp = Path(sys.argv[1])
+out = Path(sys.argv[2]) if len(sys.argv) >= 3 else inp.with_name(inp.stem + "_with_triage.csv")
+PASS_TH = 0.458
+FAIL_TH = 0.558
+df = pd.read_csv(inp)
+if "prob_bad" not in df.columns:
+    raise SystemExit("ERROR: CSV must contain column: prob_bad")
+def label_from_prob(p):
+    p = float(p)
+    if p < PASS_TH:
+        return "PASS_likely_good"
+    elif p < FAIL_TH:
+        return "REVIEW_caution"
+    else:
+        return "FAIL_likely_bad"
+df["triage_label"] = df["prob_bad"].apply(label_from_prob)
+df["pass_threshold"] = PASS_TH
+df["fail_threshold"] = FAIL_TH
+df["triage_rule"] = "PASS<0.458; REVIEW=0.458-<0.558; FAIL>=0.558"
+df.to_csv(out, index=False)
+print("Saved:", out)
+print()
+print("Triage thresholds:")
+print("  PASS   prob_bad < 0.458")
+print("  REVIEW 0.458 <= prob_bad < 0.558")
+print("  FAIL   prob_bad >= 0.558")
+print("Triage counts:")
+print(df["triage_label"].value_counts(dropna=False).to_string())
+PY
+    chmod +x /usr/local/bin/t1qc_apply_triage
+    echo "========== Creating t1qc_box command =========="
+    cat > /usr/local/bin/t1qc_box <<'EOF'
+python /opt/t1qc/app/box_t1.py "$@"
+    chmod +x /usr/local/bin/t1qc_box
+    echo "========== Creating t1qc_check_env command =========="
+    cat > /usr/local/bin/t1qc_check_env <<'EOF'
+echo "========== Python / tenet =========="
+which python
+python - <<'PY'
+import torch
+import nibabel
+import pandas
+import numpy
+print("torch:", torch.__version__)
+print("cuda available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("gpu:", torch.cuda.get_device_name(0))
+print("nibabel:", nibabel.__version__)
+print("pandas:", pandas.__version__)
+print("numpy:", numpy.__version__)
+echo ""
+echo "========== FSL =========="
+echo "FSLDIR=$FSLDIR"
+echo "PATH=$PATH"
+echo "fslinfo: $(which fslinfo || true)"
+echo "fslmaths: $(which fslmaths || true)"
+echo "bet: $(which bet || true)"
+echo "flirt: $(which flirt || true)"
+echo "robustfov: $(which robustfov || true)"
+    echo "Checking ANTs binaries:"
+    which antsRegistrationSyNQuick.sh || true
+    which antsRegistration || true
+    which antsApplyTransforms || true
+
+echo ""
+echo "========== ANTs =========="
+echo "ANTSPATH=$ANTSPATH"
+echo "antsRegistrationSyNQuick.sh: $(which antsRegistrationSyNQuick.sh || true)"
+echo "antsRegistration: $(which antsRegistration || true)"
+echo "antsApplyTransforms: $(which antsApplyTransforms || true)"
+
+echo "========== T1QC =========="
+echo "T1QC model: /opt/t1qc/models/t1qc_best_epoch021.pt"
+echo "Thresholds:"
+echo "  PASS   prob_bad < 0.458"
+echo "  REVIEW 0.458 <= prob_bad < 0.558"
+echo "  FAIL   prob_bad >= 0.558"
+    chmod +x /usr/local/bin/t1qc_check_env
+    echo "========== Build-time sanity check =========="
+    export PATH="/opt/conda/envs/tenet/bin:/opt/fsl/bin:/opt/ants/bin:$PATH"
+    export PYTHONNOUSERSITE=1
+    export FSLDIR="/opt/fsl"
+    export ANTSPATH="/opt/ants/bin/"
+    export LD_LIBRARY_PATH="/opt/ants/lib:${LD_LIBRARY_PATH:-}"
+    export FSLOUTPUTTYPE="NIFTI_GZ"
+    /opt/conda/envs/tenet/bin/python - <<'PY'
+print("tenet torch:", torch.__version__)
+print("tenet cuda available at build:", torch.cuda.is_available())
+    echo "Checking FSL binaries:"
+    which fslinfo || true
+    which fslmaths || true
+    which bet || true
+    which flirt || true
+    which robustfov || true
+    echo "Checking ANTs binaries:"
+    which antsRegistrationSyNQuick.sh || true
+    which antsRegistration || true
+    which antsApplyTransforms || true
+
+    echo "========== Repairing /bin/sh =========="
+    if [ -d /bin/sh ]; then
+        echo "WARNING: /bin/sh is a directory. Removing and replacing with symlink to bash."
+        rm -rf /bin/sh
+    if [ ! -e /bin/sh ]; then
+        if [ -x /bin/bash ]; then
+            ln -s bash /bin/sh
+        elif [ -x /usr/bin/bash ]; then
+            ln -s /usr/bin/bash /bin/sh
+        else
+            echo "ERROR: bash not found; cannot repair /bin/sh"
+            exit 1
+        fi
+    ls -ld /bin /bin/sh /bin/bash || true
+
+    echo "========== Final repair: /bin/sh =========="
+    if [ -d /bin/sh ]; then
+        echo "WARNING: /bin/sh is a directory. Removing it."
+        rm -rf /bin/sh
+    fi
+    if [ ! -e /bin/sh ]; then
+        if [ -x /bin/bash ]; then
+            ln -s bash /bin/sh
+        elif [ -x /usr/bin/bash ]; then
+            ln -s /usr/bin/bash /bin/sh
+        else
+            echo "ERROR: bash not found; cannot repair /bin/sh"
+            exit 1
+        fi
+    fi
+    ls -ld /bin /bin/sh /bin/bash || true
+
+
+
+#!/bin/sh
+set -eu
+
+export PATH="/opt/conda/envs/tenet/bin:/opt/fsl/bin:/opt/ants/bin:$PATH"
+export PYTHONNOUSERSITE=1
+
+export T1QC_HOME="/opt/t1qc"
+export T1QC_MODEL="/opt/t1qc/models/t1qc_best_epoch021.pt"
+
+export FSLDIR="/opt/fsl"
+export ANTSPATH="/opt/ants/bin/"
+export LD_LIBRARY_PATH="/opt/ants/lib:${LD_LIBRARY_PATH:-}"
+export FSLOUTPUTTYPE="NIFTI_GZ"
+export FSLMULTIFILEQUIT="TRUE"
+export FSLLOCKDIR=""
+export FSLMACHINELIST=""
+export FSLREMOTECALL=""
+
+RAW_INPUT_DIR=""
+BOXED_OUTPUT_DIR=""
+OUT_CSV=""
+THRESHOLD="0.558"
+BATCH_SIZE="2"
+NUM_WORKERS="0"
+DEVICE="cpu"
+MNI_TEMPLATE=""
+MNI_MASK=""
+SKIP_BOX_EXISTING="1"
+RECURSIVE="1"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --raw-input-dir)
+            RAW_INPUT_DIR="$2"
+            shift 2
+            ;;
+        --boxed-output-dir)
+            BOXED_OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --out-csv)
+            OUT_CSV="$2"
+            shift 2
+            ;;
+        --threshold)
+            THRESHOLD="$2"
+            shift 2
+            ;;
+        --batch-size)
+            BATCH_SIZE="$2"
+            shift 2
+            ;;
+        --num-workers)
+            NUM_WORKERS="$2"
+            shift 2
+            ;;
+        --device)
+            DEVICE="$2"
+            shift 2
+            ;;
+        --mni-template)
+            MNI_TEMPLATE="$2"
+            shift 2
+            ;;
+        --mni-mask)
+            MNI_MASK="$2"
+            shift 2
+            ;;
+        --no-skip-box-existing)
+            SKIP_BOX_EXISTING="0"
+            shift 1
+            ;;
+        --no-recursive)
+            RECURSIVE="0"
+            shift 1
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "$RAW_INPUT_DIR" ]; then
+    echo "ERROR: missing --raw-input-dir"
+    exit 1
+fi
+
+if [ -z "$BOXED_OUTPUT_DIR" ]; then
+    echo "ERROR: missing --boxed-output-dir"
+    exit 1
+fi
+
+if [ -z "$OUT_CSV" ]; then
+    echo "ERROR: missing --out-csv"
+    exit 1
+fi
+
+if [ -z "$MNI_TEMPLATE" ]; then
+    echo "ERROR: missing --mni-template"
+    exit 1
+fi
+
+if [ -z "$MNI_MASK" ]; then
+    echo "ERROR: missing --mni-mask"
+    exit 1
+fi
+
+mkdir -p "$BOXED_OUTPUT_DIR"
+mkdir -p "$(dirname "$OUT_CSV")"
+
+echo "========== Environment check =========="
+echo "PATH=$PATH"
+echo "FSLDIR=$FSLDIR"
+echo "ANTSPATH=$ANTSPATH"
+echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+echo "antsRegistrationSyNQuick.sh=$(which antsRegistrationSyNQuick.sh || true)"
+echo "antsRegistration=$(which antsRegistration || true)"
+echo "antsApplyTransforms=$(which antsApplyTransforms || true)"
+echo ""
+
+echo "========== Step 1/3: Boxing raw T1 images =========="
+echo "Raw input folder:    $RAW_INPUT_DIR"
+echo "Boxed output folder: $BOXED_OUTPUT_DIR"
+echo "MNI template:        $MNI_TEMPLATE"
+echo "MNI mask:            $MNI_MASK"
+
+if [ "$RECURSIVE" = "1" ] && [ "$SKIP_BOX_EXISTING" = "1" ]; then
+    python /opt/t1qc/app/box_t1.py \
+        --input-dir "$RAW_INPUT_DIR" \
+        --out-root "$BOXED_OUTPUT_DIR" \
+        --mni-template "$MNI_TEMPLATE" \
+        --mni-mask "$MNI_MASK" \
+        --continue-on-error \
+        --recursive \
+        --skip-existing
+elif [ "$RECURSIVE" = "1" ]; then
+    python /opt/t1qc/app/box_t1.py \
+        --input-dir "$RAW_INPUT_DIR" \
+        --out-root "$BOXED_OUTPUT_DIR" \
+        --mni-template "$MNI_TEMPLATE" \
+        --mni-mask "$MNI_MASK" \
+        --continue-on-error \
+        --recursive
+elif [ "$SKIP_BOX_EXISTING" = "1" ]; then
+    python /opt/t1qc/app/box_t1.py \
+        --input-dir "$RAW_INPUT_DIR" \
+        --out-root "$BOXED_OUTPUT_DIR" \
+        --mni-template "$MNI_TEMPLATE" \
+        --mni-mask "$MNI_MASK" \
+        --continue-on-error \
+        --skip-existing
+else
+    python /opt/t1qc/app/box_t1.py \
+        --input-dir "$RAW_INPUT_DIR" \
+        --out-root "$BOXED_OUTPUT_DIR" \
+        --mni-template "$MNI_TEMPLATE" \
+        --mni-mask "$MNI_MASK" \
+        --continue-on-error
+fi
+
+echo ""
+echo "========== Step 2/3: Running T-Net QC prediction =========="
+
+python /opt/t1qc/app/predict_boxed276_folder.py \
+    --checkpoint /opt/t1qc/models/t1qc_best_epoch021.pt \
+    --input-dir "$BOXED_OUTPUT_DIR" \
+    --out-csv "$OUT_CSV" \
+    --threshold "$THRESHOLD" \
+    --batch-size "$BATCH_SIZE" \
+    --num-workers "$NUM_WORKERS" \
+    --device "$DEVICE"
+
+echo ""
+echo "========== Step 3/3: Adding PASS/REVIEW/FAIL QC category to same CSV =========="
+
+python - "$OUT_CSV" <<'PY'
+import sys
+from pathlib import Path
+import pandas as pd
+
+csv_path = Path(sys.argv[1])
+
+PASS_TH = 0.458
+FAIL_TH = 0.558
+
+df = pd.read_csv(csv_path)
+
+if "prob_bad" not in df.columns:
+    raise SystemExit("ERROR: CSV must contain column: prob_bad")
+
+def qc_category_from_prob(p):
+    p = float(p)
+    if p < PASS_TH:
+        return "PASS_likely_good"
+    elif p < FAIL_TH:
+        return "REVIEW_caution"
+    else:
+        return "FAIL_likely_bad"
+
+df["qc_category"] = df["prob_bad"].apply(qc_category_from_prob)
+df["pass_threshold"] = PASS_TH
+df["fail_threshold"] = FAIL_TH
+df["qc_rule"] = "PASS<0.458; REVIEW=0.458-<0.558; FAIL>=0.558"
+
+df.to_csv(csv_path, index=False)
+
+print("Saved final CSV:", csv_path)
+print()
+print("QC counts:")
+print(df["qc_category"].value_counts(dropna=False).to_string())
+PY
+
+echo ""
+echo "========== Done =========="
+echo "Final CSV: $OUT_CSV"
+EOS
+
+
+%environment
+    export T1QC_HOME="/opt/t1qc"
+    export T1QC_MODEL="/opt/t1qc/models/t1qc_best_epoch021.pt"
+    export T1QC_PASS_TH="0.458"
+    export T1QC_FAIL_TH="0.558"
+    export FSLMULTIFILEQUIT="TRUE"
+    export FSLLOCKDIR=""
+    export FSLMACHINELIST=""
+    export FSLREMOTECALL=""
+    export LC_ALL="C.UTF-8"
+    export LANG="C.UTF-8"
+
+
+
+
+
+%runscript
+    set -eu
+
+    export PATH="/usr/local/bin:/opt/conda/envs/tenet/bin:/opt/fsl/bin:/opt/ants/bin:$PATH"
+    export PYTHONNOUSERSITE=1
+    export FSLDIR="/opt/fsl"
+    export ANTSPATH="/opt/ants/bin/"
+    export LD_LIBRARY_PATH="/opt/ants/lib:${LD_LIBRARY_PATH:-}"
+    export FSLOUTPUTTYPE="NIFTI_GZ"
+
+    has_raw="0"
+
+    for arg in "$@"
+    do
+        case "$arg" in
+            --raw-input-dir)
+                has_raw="1"
+                ;;
+        esac
+    done
+
+    if [ "$has_raw" = "1" ]; then
+        exec /bin/sh /opt/t1qc/app/t1qc_raw_to_qc.sh "$@"
+    else
+        exec /usr/local/bin/t1qc_predict_boxed "$@"
+    fi
