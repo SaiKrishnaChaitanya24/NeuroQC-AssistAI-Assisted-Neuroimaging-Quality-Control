@@ -42,7 +42,7 @@ The current prototype supports:
 └── README.md
 ```
 
-## What the Toolkit does
+## Workflow overview
 
 The Toolkit takes a T1-weighted MRI scan and produces a quality-control result.
 
@@ -64,6 +64,109 @@ FAIL   : likely poor-quality scan
 ```
 
 The goal is to help prioritize review. Clearly acceptable scans can move forward, clearly poor scans can be flagged, and uncertain scans can remain in a manual review pathway.
+
+## Model architecture
+
+The current model is a custom 3D convolutional neural network named `T1QCHybridCNN`. It is designed for volumetric T1-weighted MRI quality-control prediction.
+
+The model uses a two-channel 3D input:
+
+```text
+Channel 0: standardized / masked T1-weighted MRI volume
+Channel 1: corresponding brain mask
+```
+
+Each input is expected to be a 276 × 276 × 276 volume.
+
+The architecture uses a 3D CNN backbone with residual-style convolutional blocks. In practice, the network includes:
+
+- an initial stem convolution block
+- multiple 3D convolutional feature extraction stages
+- residual-style blocks with downsampling
+- global feature pooling
+- prediction heads for quality-control output
+
+The model was developed as a practical prototype rather than as a direct copy of a standard public architecture. It is best described as a custom 3D residual CNN for T1-weighted MRI quality control.
+
+## Model outputs
+
+For each scan, the model produces:
+
+- `prob_bad`: probability score for poor image quality
+- `pred_qc_label`: binary good/bad prediction
+- `qc_category`: PASS, REVIEW, or FAIL category
+
+The workflow may also produce artifact-related outputs depending on the script and checkpoint used. During development, artifact labels included:
+
+```text
+none
+motion
+ghosting
+gibbs
+other
+```
+
+The main goal of the current MVP is the binary quality-control and human-in-the-loop triage workflow.
+
+## Training overview
+
+The model was trained using boxed T1-weighted MRI volumes and corresponding brain masks.
+
+The training data included:
+
+- visually acceptable T1-weighted MRI scans
+- real poor-quality T1-weighted MRI scans
+- synthetic artifact examples generated from acceptable scans
+
+Synthetic artifacts were created to expose the model to common image-quality problems. Artifact types used during development included:
+
+- motion
+- ghosting
+- Gibbs/ringing
+
+The training setup used source-aware data organization so that scans from different datasets or sources were represented more carefully during training and evaluation. This was done to reduce the chance that the model would only learn source- or scanner-specific patterns.
+
+The training script is included here:
+
+```bash
+python src/t1qc_train_model.py --help
+```
+
+Training requires a CSV manifest and access to prepared T1-weighted MRI images and corresponding masks. MRI data are not included in this repository.
+
+For the current prototype, the training manifest was created locally using a helper script named similar to:
+
+```text
+make_manifest_strongMOD_plus_GTbad.py
+```
+
+That helper script and the resulting manifest are not included because they were specific to the local dataset layout. For new datasets, users should create their own manifest CSV matching the expected input columns used by the training script.
+
+## Synthetic artifact generation
+
+Synthetic artifact examples were used during development to create additional poor-quality training examples from acceptable scans.
+
+The synthetic artifact generation script is:
+
+```bash
+python scripts/create_synthetic_artifacts.py --help
+```
+
+The current script is included as a development utility. It may need path and parameter changes for a new dataset.
+
+## Human-in-the-loop triage rule
+
+The current prototype uses a simple triage rule:
+
+```text
+PASS   : prob_bad < 0.45
+REVIEW : 0.45 <= prob_bad < 0.55
+FAIL   : prob_bad >= 0.55
+```
+
+These thresholds are prototype settings. They should be tuned and validated for the intended dataset and use case.
+
+The reason for using PASS / REVIEW / FAIL instead of only good / bad is that many MRI scans are not clearly acceptable or clearly unusable. The REVIEW category keeps borderline cases in a human review pathway.
 
 ## Container download
 
@@ -174,16 +277,6 @@ Key fields:
 - `fail_threshold`: threshold used for FAIL
 - `qc_rule`: text description of the decision rule
 
-Current prototype triage rule:
-
-```text
-PASS   : prob_bad < 0.45
-REVIEW : 0.45 <= prob_bad < 0.55
-FAIL   : prob_bad >= 0.55
-```
-
-These thresholds are prototype settings and may need to be adjusted for different datasets or use cases.
-
 ## Grad-CAM visualizations
 
 The Toolkit can optionally generate Grad-CAM overlays. These overlays provide a rough visual indication of where the model was focusing when making a prediction.
@@ -205,40 +298,6 @@ python src/t1qc_predict_boxed_gradcam.py \
   --gradcam-dir /path/to/gradcam_outputs \
   --gradcam-target-layer layer3.1.conv2
 ```
-
-## Training
-
-The training script is provided here:
-
-```bash
-python src/t1qc_train_model.py --help
-```
-
-Training requires a CSV manifest and access to prepared T1-weighted MRI images and corresponding masks. MRI data are not included in this repository.
-
-For the current prototype, the training manifest was created locally using a helper script named similar to:
-
-```text
-make_manifest_strongMOD_plus_GTbad.py
-```
-
-That helper script and the resulting manifest are not included because they were specific to the local dataset layout. For new datasets, create a manifest CSV that matches the expected input columns used by the training script.
-
-## Synthetic artifact generation
-
-Synthetic artifact examples were used during development to expose the model to common image-quality problems.
-
-The synthetic artifact generation script is:
-
-```bash
-python scripts/create_synthetic_artifacts.py --help
-```
-
-Artifact types used during development included:
-
-- motion
-- ghosting
-- Gibbs/ringing
 
 ## SLURM training template
 
