@@ -55,7 +55,7 @@ For raw scans, the workflow prepares the image by converting it into a standardi
 
 The prepared image and brain mask are then used as the two model inputs. The model produces a probability score for poor image quality and a good/bad prediction.
 
-The prediction score is then organized into a human-in-the-loop quality-control category:
+The prediction score is organized into a human-in-the-loop quality-control category:
 
 ```text
 PASS   : likely acceptable scan
@@ -96,7 +96,7 @@ For each scan, the model produces:
 - `pred_qc_label`: binary good/bad prediction
 - `qc_category`: PASS, REVIEW, or FAIL category
 
-The workflow may also produce artifact-related outputs depending on the script and checkpoint used. During development, artifact labels included:
+During development, artifact-related labels were also used, including:
 
 ```text
 none
@@ -132,7 +132,7 @@ The training script is included here:
 python src/t1qc_train_model.py --help
 ```
 
-Training requires a CSV manifest and access to prepared T1-weighted MRI images and corresponding masks. 
+Training requires a CSV manifest and access to prepared T1-weighted MRI images and corresponding masks.
 
 ## Synthetic artifact generation
 
@@ -184,9 +184,45 @@ apptainer inspect Neuroimaging_Toolkit_T1QC.sif
 
 If the downloaded file is very small or appears to be an HTML file, the Box link was not downloaded as the actual container. In that case, download the `.sif` file through the browser from Box and transfer it to the compute system.
 
+## Running the Toolkit on a new dataset
+
+To run the Toolkit on a different dataset, place all T1-weighted MRI scans in one input folder.
+
+Example raw dataset layout:
+
+```text
+new_dataset/
+├── sub-001_T1w.nii.gz
+├── sub-002_T1w.nii.gz
+├── sub-003_T1w.nii.gz
+└── ...
+```
+
+Then choose an output folder for the prepared boxed images and an output CSV path for predictions.
+
+Example:
+
+```bash
+apptainer run --cleanenv \
+  Neuroimaging_Toolkit_T1QC.sif \
+  --raw-input-dir /path/to/new_dataset \
+  --boxed-output-dir /path/to/new_dataset_boxed \
+  --out-csv /path/to/new_dataset_predictions.csv \
+  --batch-size 1 \
+  --num-workers 0 \
+  --device cpu
+```
+
+This command performs two steps:
+
+1. prepares each raw T1-weighted scan into a standardized 276 × 276 × 276 boxed image and brain mask
+2. runs the quality-control prediction model on the prepared image and mask
+
+The boxed output folder will contain the prepared model inputs. The CSV file will contain the quality-control predictions.
+
 ## Running prediction on already boxed scans
 
-Use this mode when the input folder already contains boxed T1-weighted images and corresponding brain masks.
+Use this mode only if the input folder already contains boxed T1-weighted images and corresponding brain masks.
 
 Expected file pattern:
 
@@ -219,32 +255,6 @@ apptainer run --nv --cleanenv \
   --device cuda
 ```
 
-## Running prediction from raw T1-weighted MRI scans
-
-Use this mode when the scans need preprocessing before prediction.
-
-```bash
-apptainer run --cleanenv \
-  Neuroimaging_Toolkit_T1QC.sif \
-  --raw-input-dir /path/to/raw_t1_folder \
-  --boxed-output-dir /path/to/boxed_output_folder \
-  --out-csv /path/to/predictions.csv \
-  --batch-size 1 \
-  --num-workers 0 \
-  --device cpu
-```
-
-This runs the image preparation step first, then runs the prediction step on the prepared images.
-
-The preprocessing step creates:
-
-```text
-boxed T1-weighted image
-brain mask
-```
-
-These become the two inputs to the model.
-
 ## Output CSV
 
 The main output is a CSV file. Important columns may include:
@@ -269,26 +279,48 @@ Key fields:
 - `fail_threshold`: threshold used for FAIL
 - `qc_rule`: text description of the decision rule
 
-## Grad-CAM visualizations
+## Optional Grad-CAM visualizations
 
 The Toolkit can optionally generate Grad-CAM overlays. These overlays provide a rough visual indication of where the model was focusing when making a prediction.
 
 Grad-CAM outputs are intended as a review aid, especially for scans marked REVIEW or FAIL. They should not be treated as a complete explanation of the model decision.
 
-Example command using the source script:
+To generate Grad-CAM outputs for a new boxed dataset using the source script:
 
 ```bash
 python src/t1qc_predict_boxed_gradcam.py \
   --checkpoint /path/to/model_checkpoint.pt \
-  --input-dir /path/to/boxed_t1_folder \
-  --out-csv /path/to/predictions_with_gradcam.csv \
+  --input-dir /path/to/new_dataset_boxed \
+  --out-csv /path/to/new_dataset_predictions_with_gradcam.csv \
   --threshold 0.55 \
   --batch-size 1 \
   --num-workers 0 \
   --device cpu \
   --save-gradcam \
-  --gradcam-dir /path/to/gradcam_outputs \
+  --gradcam-dir /path/to/new_dataset_gradcam_outputs \
   --gradcam-target-layer layer3.1.conv2
+```
+
+If using the prebuilt container, use the standard container prediction command first. Grad-CAM support depends on the container version and included entrypoint.
+
+## Example: complete run on a new dataset
+
+```bash
+# 1. Download or copy the container
+ls -lh Neuroimaging_Toolkit_T1QC.sif
+
+# 2. Prepare and predict a new raw T1-weighted MRI dataset
+apptainer run --cleanenv \
+  Neuroimaging_Toolkit_T1QC.sif \
+  --raw-input-dir /path/to/new_dataset \
+  --boxed-output-dir /path/to/new_dataset_boxed \
+  --out-csv /path/to/new_dataset_predictions.csv \
+  --batch-size 1 \
+  --num-workers 0 \
+  --device cpu
+
+# 3. Inspect the prediction CSV
+head /path/to/new_dataset_predictions.csv
 ```
 
 ## SLURM training template
@@ -302,21 +334,6 @@ sbatch scripts/submit_training_slurm.sh
 ```
 
 This script is meant as a starting point and may need to be modified for a specific cluster environment.
-
-## Grad-CAM batch script
-
-A portable Grad-CAM batch script is included:
-
-```bash
-CKPT=/path/to/model_checkpoint.pt \
-GOOD_DIR=/path/to/boxed_good \
-BAD_DIR=/path/to/boxed_bad \
-RANDOM_DIR=/path/to/boxed_random \
-OUT_ROOT=/path/to/gradcam_outputs \
-bash scripts/run_gradcam_on_testsets.sh
-```
-
-Any of the dataset variables can be left unset, and that group will be skipped.
 
 ## Important notes
 
