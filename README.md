@@ -285,4 +285,4 @@ Large files such as MRI data, model checkpoints, and the prebuilt container are 
 
 ## Citation / acknowledgment
 
-If this workflow or code is used or adapted, please acknowledge the Neuroimaging Toolkit / T-Net project as appropriate.
+If this workflow or code is used or adapted, please acknowledge the Neuroimaging Toolkit project as appropriate.
