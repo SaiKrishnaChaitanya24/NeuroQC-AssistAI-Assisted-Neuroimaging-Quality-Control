@@ -132,15 +132,7 @@ The training script is included here:
 python src/t1qc_train_model.py --help
 ```
 
-Training requires a CSV manifest and access to prepared T1-weighted MRI images and corresponding masks. MRI data are not included in this repository.
-
-For the current prototype, the training manifest was created locally using a helper script named similar to:
-
-```text
-make_manifest_strongMOD_plus_GTbad.py
-```
-
-That helper script and the resulting manifest are not included because they were specific to the local dataset layout. For new datasets, users should create their own manifest CSV matching the expected input columns used by the training script.
+Training requires a CSV manifest and access to prepared T1-weighted MRI images and corresponding masks. 
 
 ## Synthetic artifact generation
 
