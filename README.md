@@ -22,15 +22,22 @@ The current prototype supports:
 - optional Grad-CAM overlays for visual review support
 - containerized execution using Apptainer/Singularity
 
-## Full Video Demonstration
+## Video Demonstration
 
-Watch the complete NeuroQC-Assist demonstration (7 minutes).
+Watch the full NeuroQC-Assist demonstration to see the
+end-to-end workflow, from T1-weighted MRI preprocessing
+to AI-assisted quality assessment and review.
 
-The video covers T1 MRI preprocessing, AI-based quality
-assessment, PASS/REVIEW/FAIL classifications, and
-Grad-CAM visualizations.
+The demonstration covers:
+- T1-weighted MRI preprocessing and brain mask generation
+- Automated image-quality assessment using a 3D CNN
+- PASS, REVIEW, and FAIL categorization
+- CSV output generation
+- Grad-CAM visualizations for interpreting model predictions
 
-[▶ Watch or Download the Full Demonstration](https://github.com/SaiKrishnaChaitanya24/NeuroQC-AssistAI-Assisted-Neuroimaging-Quality-Control/raw/refs/heads/main/NeuroQC-Assist_Demo.mp4)
+[![Watch the NeuroQC-Assist Video Demonstration](https://img.youtube.com/vi/8gkM8GeRTxo/hqdefault.jpg)](https://youtu.be/8gkM8GeRTxo)
+
+**[▶ Watch the Full Video Demonstration on YouTube](https://youtu.be/8gkM8GeRTxo)**
 
 ## Repository structure
 
