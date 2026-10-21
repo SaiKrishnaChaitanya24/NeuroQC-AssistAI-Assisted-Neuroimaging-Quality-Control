@@ -24,13 +24,13 @@ The current prototype supports:
 
 ## Full Video Demonstration
 
-Watch the complete 7-minute demonstration of NeuroQC-Assist,
-including T1 MRI preprocessing, automated quality assessment,
-PASS/REVIEW/FAIL classifications, and Grad-CAM visualizations.
+Watch the complete NeuroQC-Assist demonstration (7 minutes).
 
-### ▶ Watch the Demonstration
+The video covers T1 MRI preprocessing, AI-based quality
+assessment, PASS/REVIEW/FAIL classifications, and
+Grad-CAM visualizations.
 
-[Click here to watch or download the full video](./NeuroQC-Assist_Demo.mp4)
+[▶ Watch or Download the Full Demonstration](https://github.com/SaiKrishnaChaitanya24/NeuroQC-AssistAI-Assisted-Neuroimaging-Quality-Control/raw/refs/heads/main/NeuroQC-Assist_Demo.mp4)
 
 ## Repository structure
 
