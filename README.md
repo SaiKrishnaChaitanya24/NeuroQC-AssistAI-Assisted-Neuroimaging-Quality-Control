@@ -22,6 +22,16 @@ The current prototype supports:
 - optional Grad-CAM overlays for visual review support
 - containerized execution using Apptainer/Singularity
 
+## Full Video Demonstration
+
+Watch the complete 7-minute demonstration of NeuroQC-Assist,
+including T1 MRI preprocessing, automated quality assessment,
+PASS/REVIEW/FAIL classifications, and Grad-CAM visualizations.
+
+### ▶ Watch the Demonstration
+
+[Click here to watch or download the full video](./NeuroQC-Assist_Demo.mp4)
+
 ## Repository structure
 
 ```text
